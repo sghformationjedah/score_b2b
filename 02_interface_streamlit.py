@@ -8,13 +8,21 @@ st.set_page_config(
     page_icon="🏢",
     layout="wide",
 )
-API_BASE_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+raw_url = os.getenv("API_URL", "http://127.0.0.1:8000")
 
-# Ajoute https:// si l'URL est fournie sans protocole (cas de render.yaml)
-if not API_BASE_URL.startswith("http://") and not API_BASE_URL.startswith("https://"):
-    API_URL = f"https://{API_BASE_URL}"
+# 1. Gestion du cas local
+if "127.0.0.1" in raw_url or "localhost" in raw_url:
+    API_URL = raw_url
+# 2. Gestion de l'injection Render (ajoute https:// et .onrender.com si manquants)
+elif not raw_url.startswith("http"):
+    if not raw_url.endswith(".onrender.com"):
+        API_URL = f"https://{raw_url}.onrender.com"
+    else:
+        API_URL = f"https://{raw_url}"
 else:
-    API_URL = API_BASE_URL
+    API_URL = raw_url
+
+API_URL = API_URL.rstrip("/")
     
 # Exemple d'appel ensuite :
 # response = requests.post(f"{API_URL}/predict", json=payload)
