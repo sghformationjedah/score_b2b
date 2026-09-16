@@ -1,0 +1,25 @@
+services:
+  # --------------------------------------------------
+  # 1. API Backend (FastAPI + XGBoost)
+  # --------------------------------------------------
+  - type: web
+    name: btp-creditscore-api
+    runtime: docker
+    dockerfilePath: ./dockerfile_api
+    plan: free
+    healthCheckPath: /docs
+
+  # --------------------------------------------------
+  # 2. Interface Frontend (Streamlit)
+  # --------------------------------------------------
+  - type: web
+    name: btp-creditscore-ui
+    runtime: docker
+    dockerfilePath: ./dockerfile_streamlit
+    plan: free
+    envVars:
+      - key: API_URL
+        fromService:
+          type: web
+          name: btp-creditscore-api
+          property: host
