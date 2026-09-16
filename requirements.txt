@@ -1,0 +1,21 @@
+# Traitement de données et Machine Learning
+pandas
+numpy
+scikit-learn
+xgboost
+joblib
+
+# Bases de données et stockage
+sqlalchemy
+psycopg2-binary
+duckdb
+
+# Web, API et requêtes HTTP
+streamlit
+fastapi
+uvicorn
+requests
+
+# Environnement et intégration VS Code
+python-dotenv
+ipykernel
