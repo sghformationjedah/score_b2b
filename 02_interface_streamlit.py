@@ -73,7 +73,7 @@ if btn_chercher:
     else:
         with st.spinner("Interrogation de la base et inférence XGBoost..."):
             try:
-                url = f"{API_BASE_URL}/entreprises/{siren_input.strip()}"
+                url = f"{API_URL}/entreprises/{siren_input.strip()}"
                 params = {"montant_demande": montant_demande}
                 response = requests.get(url, params=params, timeout=10)
 
@@ -191,7 +191,7 @@ if btn_chercher:
 
             except requests.exceptions.ConnectionError:
                 st.error(
-                    f"❌ Impossible de joindre l'API sur {API_BASE_URL}. Vérifiez qu'Uvicorn est bien démarré."
+                    f"❌ Impossible de joindre l'API sur {API_URL}. Vérifiez qu'Uvicorn est bien démarré."
                 )
             except Exception as err:
                 st.error(f"❌ Une erreur imprévue est survenue : {err}")
