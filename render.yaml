@@ -5,7 +5,7 @@ services:
   - type: web
     name: btp-creditscore-api
     runtime: docker
-    dockerfilePath: ./dockerfile_api
+    dockerfilePath: ./Dockerfile.api
     plan: free
     healthCheckPath: /docs
 
@@ -15,7 +15,7 @@ services:
   - type: web
     name: btp-creditscore-ui
     runtime: docker
-    dockerfilePath: ./dockerfile_streamlit
+    dockerfilePath: ./Dockerfile.streamlit
     plan: free
     envVars:
       - key: API_URL
