@@ -1,0 +1,28 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    volumes:
+      # Synchronise vos fichiers locaux avec le conteneur en direct
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql://scoring_b2b:INihq7lK3FeGWNEprxz8tURdmZWFl2qt@dpg-dai0psid0e5s7399fijg-a.frankfurt-postgres.render.com/scoring_b2b?sslmode=require
+    # Ajout du flag --reload pour qu'Uvicorn redémarre à chaque Ctrl+S
+    command: uvicorn 03_api:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    ports:
+      - "8501:8501"
+    volumes:
+      # Synchronise vos fichiers locaux avec le conteneur en direct
+      - .:/app
+    environment:
+      - API_URL=http://backend:8000
+    depends_on:
+      - backend

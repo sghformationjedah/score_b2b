@@ -1,0 +1,18 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Dépendances de l'interface graphique
+RUN pip install --no-cache-dir \
+    streamlit \
+    pandas \
+    requests
+
+COPY . .
+
+EXPOSE 8501
+
+CMD ["streamlit", "run", "02_interface_streamlit.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
