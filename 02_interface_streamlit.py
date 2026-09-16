@@ -8,15 +8,14 @@ st.set_page_config(
     page_icon="🏢",
     layout="wide",
 )
-
 API_BASE_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 
-# Render fournit le hostname sans le protocole (ex: btp-creditscore-api.onrender.com)
-if not API_BASE_URL.startswith("http://") and not api_host.startswith("https://"):
+# Ajoute https:// si l'URL est fournie sans protocole (cas de render.yaml)
+if not API_BASE_URL.startswith("http://") and not API_BASE_URL.startswith("https://"):
     API_URL = f"https://{API_BASE_URL}"
 else:
     API_URL = API_BASE_URL
-
+    
 # Exemple d'appel ensuite :
 # response = requests.post(f"{API_URL}/predict", json=payload)
 
