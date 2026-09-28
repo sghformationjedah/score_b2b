@@ -61,7 +61,7 @@ with col_saisie:
     )
 
     btn_chercher = st.button(
-        "Rechercher l'entreprise", type="primary", use_container_width=True
+        "Rechercher la solvabilité", type="primary", use_container_width=True
     )
 
 # -----------------------------------------------------------------------------
