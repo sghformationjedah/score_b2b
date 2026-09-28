@@ -4,7 +4,7 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="BTP CreditScore — Recherche Entreprise",
+    page_title="BTP CreditScore B2B — Recherche Entreprise",
     page_icon="🏢",
     layout="wide",
 )
