@@ -10,10 +10,8 @@ st.set_page_config(
 )
 raw_url = os.getenv("API_URL", "http://127.0.0.1:8000")
 
-# 1. Gestion du cas local
 if "127.0.0.1" in raw_url or "localhost" in raw_url:
     API_URL = raw_url
-# 2. Gestion de l'injection Render (ajoute https:// et .onrender.com si manquants)
 elif not raw_url.startswith("http"):
     if not raw_url.endswith(".onrender.com"):
         API_URL = f"https://{raw_url}.onrender.com"
@@ -23,10 +21,6 @@ else:
     API_URL = raw_url
 
 API_URL = API_URL.rstrip("/")
-    
-# Exemple d'appel ensuite :
-# response = requests.post(f"{API_URL}/predict", json=payload)
-
 
 st.markdown(
     """
@@ -85,6 +79,7 @@ if btn_chercher:
                     accord = decision.get("montant_accorde", 0.0)
                     plafond = decision.get("plafond_autorise", 0.0)
                     motif = decision.get("motif", "")
+                    top_raisons = decision.get("top_raisons", [])
 
                     st.success("✅ Entreprise identifiée et scorée avec succès !")
 
@@ -106,9 +101,7 @@ if btn_chercher:
                         ca_val = data.get("chiffre_affaires")
                         try:
                             if ca_val is not None and str(ca_val).strip() != "":
-                                ca_format = f"{float(ca_val):,.0f} €".replace(
-                                    ",", " "
-                                )
+                                ca_format = f"{float(ca_val):,.0f} €".replace(",", " ")
                             else:
                                 ca_format = "Non déclaré"
                         except (ValueError, TypeError):
@@ -129,12 +122,12 @@ if btn_chercher:
                         )
 
                     with col_score_droite:
-                        # Carte visuelle du score et de la décision en haut à droite
                         couleurs_badge = {
                             "VERT": "#10b981",
                             "ORANGE": "#f59e0b",
                             "ROUGE": "#ef4444",
                             "NOIR": "#1e293b",
+                            "BLOCAGE_BILAN": "#ef4444",
                         }
                         couleur = couleurs_badge.get(statut, "#64748b")
 
@@ -152,21 +145,48 @@ if btn_chercher:
                                 </p>
                                 <hr style="margin: 10px 0;">
                                 <p style="margin: 0; font-size: 0.95rem;">
-                                    <b>Montant Demandé :</b> <span style="color: #0f172a; font-weight: bold;">{montant_demande  :,.0f} €</span>
+                                    <b>Montant Demandé :</b> <span style="color: #0f172a; font-weight: bold;">{montant_demande:,.0f} €</span>
                                     <br>
                                     <b>Montant Accordé :</b> <span style="color: #0f172a; font-weight: bold;">{accord:,.0f} €</span>
                                     <span style="color: #64748b;">(Plafond : {plafond:,.0f} €)</span>
                                 </p>
-                            </div> 
+                            </div>
+                            <br> 
                             """,
                             unsafe_allow_html=True,
                         )
 
+                    # ---------------------------------------------------------
+                    # BANDEAU RECOMMANDATION + TOP 3 DES RAISONS
+                    # ---------------------------------------------------------
                     st.info(f"💡 **Recommandation du moteur d'octroi :** {motif}")
+
+                    if top_raisons:
+                        st.markdown("##### 🔍 **Facteurs clés ayant motivé la décision :**")
+                        cols_raisons = st.columns(len(top_raisons))
+                        for idx, r in enumerate(top_raisons):
+                            with cols_raisons[idx]:
+                                est_favorable = r.get("impact") == "favorable"
+                                icone = "🟢" if est_favorable else "🔴"
+                                couleur_cadre = "#d1fae5" if est_favorable else "#fee2e2"
+                                couleur_texte = "#065f46" if est_favorable else "#991b1b"
+                                
+                                val_texte = f" ({r['valeur']})" if r.get("valeur") is not None else ""
+                                
+                                st.markdown(
+                                    f"""
+                                    <div style="background-color: {couleur_cadre}; color: {couleur_texte}; padding: 10px 12px; border-radius: 8px; font-size: 0.88rem; border: 1px solid {couleur_texte}30; min-height: 75px;">
+                                        <b>{icone} Raison {idx+1} : {r.get('variable')}</b>{val_texte}<br>
+                                        <span style="font-size: 0.82rem;">{r.get('description')}</span>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True,
+                                )
+
                     st.divider()
 
                     # ---------------------------------------------------------
-                    # AFFICHAGE 1 : Tableau vertical clé / valeur (Vue fiche)
+                    # AFFICHAGE 1 : Tableau vertical clé / valeur
                     # ---------------------------------------------------------
                     st.markdown("### 📑 Détail complet des variables de la base")
 
