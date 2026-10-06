@@ -35,39 +35,46 @@ st.markdown(
 
 # Vérifie si l'API est opérationnelle ou en someil
 
-def wake_up_backend(api_url: str, timeout_seconds: int = 70) -> bool:
-    if st.session_state.get("backend_ready"):
-        return True
-
-    health_endpoint = f"{api_url}/health"
-    start_time = time.time()
-
-    with st.spinner(
-        "⏳ Réveil du serveur backend Render en cours (environ 30 à 60s)..."
-    ):
-        while time.time() - start_time < timeout_seconds:
-            try:
-                response = requests.get(health_endpoint, timeout=5)
-                if response.status_code == 200:
-                    st.session_state["backend_ready"] = True
-                    return True
-            except requests.RequestException:
-                pass
-            time.sleep(3)
-
-    return False
-
-
-# 3. Lancement du test au chargement de l'UI
 status_placeholder = st.empty()
-status_placeholder.info("Checking for API...")
+status_placeholder.info(f"Checking API on: {API_URL}/health ...")
+
+def wake_up_backend(api_url: str, timeout_seconds: int = 70) -> bool:
+  if st.session_state.get("backend_ready"):
+    return True
+
+  health_endpoint = f"{api_url}/health"
+  start_time = time.time()
+
+  with st.spinner(
+      "⏳ Réveil du serveur backend Render en cours (environ 30 à 60s)..."
+  ):
+    while time.time() - start_time < timeout_seconds:
+      try:
+        response = requests.get(health_endpoint, timeout=5)
+        if response.status_code == 200:
+          st.session_state["backend_ready"] = True
+          return True
+        else:
+          # Affiche l'erreur si le serveur répond autre chose que 200
+          status_placeholder.warning(
+              f"Réponse reçue: {response.status_code} depuis {health_endpoint}"
+          )
+      except requests.RequestException as exc:
+        status_placeholder.info(f"Tentative de connexion... ({exc})")
+
+      time.sleep(3)
+
+  return False
+
 
 if not wake_up_backend(API_URL):
-    status_placeholder.error("L'API n'a pas répondu à temps.")
-    st.stop()
+  status_placeholder.error(
+      f"L'API ({API_URL}) n'a pas répondu à temps. Vérifie l'URL et les logs du"
+      " backend."
+  )
+  st.stop()
 else:
-    status_placeholder.empty()  # Efface le message une fois l'API prête
-
+  status_placeholder.empty()
 # -----------------------------------------------------------------------------
 # 1. ZONE DE SAISIE
 # -----------------------------------------------------------------------------
