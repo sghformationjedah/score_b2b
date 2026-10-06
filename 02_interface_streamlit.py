@@ -59,12 +59,14 @@ def wake_up_backend(api_url: str, timeout_seconds: int = 70) -> bool:
 
 
 # 3. Lancement du test au chargement de l'UI
-if not wake_up_backend(API_URL):
-    st.error(
-        "Le serveur backend met trop de temps à démarrer. Rafraîchis la page dans un instant."
-    )
-    st.stop()
+status_placeholder = st.empty()
+status_placeholder.info("Checking for API...")
 
+if not wake_up_backend(API_URL):
+    status_placeholder.error("L'API n'a pas répondu à temps.")
+    st.stop()
+else:
+    status_placeholder.empty()  # Efface le message une fois l'API prête
 
 # -----------------------------------------------------------------------------
 # 1. ZONE DE SAISIE
