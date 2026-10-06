@@ -2,12 +2,14 @@ import os
 import pandas as pd
 import requests
 import streamlit as st
+import time
 
 st.set_page_config(
     page_title="BTP CreditScore B2B — Recherche Entreprise",
     page_icon="🏢",
     layout="wide",
 )
+
 raw_url = os.getenv("API_URL", "http://127.0.0.1:8000")
 
 if "127.0.0.1" in raw_url or "localhost" in raw_url:
@@ -30,6 +32,39 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# Vérifie si l'API est opérationnelle ou en someil
+
+def wake_up_backend(api_url: str, timeout_seconds: int = 70) -> bool:
+    if st.session_state.get("backend_ready"):
+        return True
+
+    health_endpoint = f"{api_url}/health"
+    start_time = time.time()
+
+    with st.spinner(
+        "⏳ Réveil du serveur backend Render en cours (environ 30 à 60s)..."
+    ):
+        while time.time() - start_time < timeout_seconds:
+            try:
+                response = requests.get(health_endpoint, timeout=5)
+                if response.status_code == 200:
+                    st.session_state["backend_ready"] = True
+                    return True
+            except requests.RequestException:
+                pass
+            time.sleep(3)
+
+    return False
+
+
+# 3. Lancement du test au chargement de l'UI
+if not wake_up_backend(API_URL):
+    st.error(
+        "Le serveur backend met trop de temps à démarrer. Rafraîchis la page dans un instant."
+    )
+    st.stop()
+
 
 # -----------------------------------------------------------------------------
 # 1. ZONE DE SAISIE
