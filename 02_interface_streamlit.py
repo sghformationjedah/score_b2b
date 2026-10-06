@@ -42,27 +42,24 @@ def wake_up_backend(api_url: str, timeout_seconds: int = 70) -> bool:
   if st.session_state.get("backend_ready"):
     return True
 
-  health_endpoint = f"{api_url}/health"
+  health_endpoint = f"{api_url.rstrip('/')}/health"
   start_time = time.time()
 
-  with st.spinner(
-      "⏳ Réveil du serveur backend Render en cours (environ 30 à 60s)..."
-  ):
+  with st.spinner("⏳ Vérification de l'état du serveur..."):
     while time.time() - start_time < timeout_seconds:
       try:
         response = requests.get(health_endpoint, timeout=5)
-        if response.status_code == 200:
+
+        # 200 = Prêt | 429 = Prêt et vivant (même si temporairement bridé)
+        if response.status_code in (200, 429):
           st.session_state["backend_ready"] = True
           return True
-        else:
-          # Affiche l'erreur si le serveur répond autre chose que 200
-          status_placeholder.warning(
-              f"Réponse reçue: {response.status_code} depuis {health_endpoint}"
-          )
-      except requests.RequestException as exc:
-        status_placeholder.info(f"Tentative de connexion... ({exc})")
 
-      time.sleep(3)
+      except requests.RequestException:
+        pass  # En cours de démarrage
+
+      # Espacer à 5 secondes pour calmer le rate limiter
+      time.sleep(5)
 
   return False
 

@@ -17,10 +17,9 @@ app = FastAPI(
     ),
     version="1.2.0",
 )
-
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+  return {"status": "ok"}
 
 app.add_middleware(
     CORSMiddleware,
