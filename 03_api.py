@@ -70,7 +70,8 @@ def get_db_connection():
     """Établit la connexion avec la base de données PostgreSQL Render."""
     db_url = os.getenv(
         "DATABASE_URL",
-        "postgresql://scoring_b2b:INihq7lK3FeGWNEprxz8tURdmZWFl2qt@dpg-dai0psid0e5s7399fijg-a.frankfurt-postgres.render.com/scoring_b2b?sslmode=require",
+        #"postgresql://scoring_b2b:INihq7lK3FeGWNEprxz8tURdmZWFl2qt@dpg-dai0psid0e5s7399fijg-a.frankfurt-postgres.render.com/scoring_b2b?sslmode=require",
+        "postgresql://postgres.roxylxdgllxzetdlaptd:iM%40D2OO3lIn%402OO726@aws-0-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require",
     )
     if db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql://", 1)
