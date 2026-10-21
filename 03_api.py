@@ -32,7 +32,8 @@ app.add_middleware(
 # -----------------------------------------------------------------------------
 # CHARGEMENT DE L'ARTEFACT XGBOOST ET DE L'EXPLAINER SHAP
 # -----------------------------------------------------------------------------
-MODEL_PATH = os.getenv("MODEL_PATH", "modele_1_xgboost.joblib")
+ARTEFACT_FILE_NAME="modele_1_xgboost_NN_0.joblib"
+MODEL_PATH = os.getenv("MODEL_PATH", ARTEFACT_FILE_NAME)
 print("MODEL_PATH", MODEL_PATH)
 model = None
 explainer = None
