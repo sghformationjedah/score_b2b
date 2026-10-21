@@ -243,61 +243,77 @@ def predire_risque_et_raisons(
   proba = float(model.predict_proba(features_aligned)[0, 1])
 
   # 6. Extraction des 3 raisons dominantes via SHAP filtrées selon le statut bilan
+  # 6. Extraction des 3 raisons dominantes via SHAP
   top_raisons = []
   try:
-    if explainer is not None:
-      shap_vals = explainer(features_aligned).values[0]
-      if len(shap_vals.shape) == 2:
-        shap_vals = shap_vals[:, 1]
+        if explainer is not None:
+            shap_vals = explainer(features_aligned).values[0]
+            if len(shap_vals.shape) == 2:
+                shap_vals = shap_vals[:, 1]
 
-      # CORRECTION 2 : Filtrer les colonnes candidates pour ne pas afficher de ratios fantômes
-      indices_candidats = []
-      for idx, nom_col in enumerate(feature_names):
-        val_reelle = features_aligned.iloc[0, idx]
+            indices_candidats = []
+            for idx, nom_col in enumerate(feature_names):
+                val_reelle = features_aligned.iloc[0, idx]
 
-        # Si pas de bilan déposé : exclusion formelle de toutes les variables comptables
-        if has_bilan == 0 and any(nom_col.startswith(c) for c in COLONNES_COMPTABLES):
-          continue
+                # 1. Exclusion des variables comptables si pas de bilan déposé
+                if has_bilan == 0 and any(c in nom_col for c in COLONNES_COMPTABLES):
+                    continue
 
-        # Si la valeur brute originale était manquante (NaN), on l'exclut de l'explication
-        if pd.isna(val_reelle):
-          continue
+                # 2. Exclusion des valeurs manquantes originales
+                if pd.isna(val_reelle):
+                    continue
 
-        indices_candidats.append(idx)
+                # 3. VERROU OHE : si c'est une colonne indicatrice binaire (tranche_*, code_naf_*, departement_*),
+                # on ne la retient QUE si l'entreprise possède cette modalité (val_reelle == 1).
+                # On évite ainsi d'expliquer une décision par des zéros sur des catégories inactives.
+                est_binaire_ohe = any(nom_col.startswith(prefix) for prefix in ["tranche_effectif_", "code_naf_", "departement_"])
+                if est_binaire_ohe and val_reelle == 0:
+                    continue
 
-      # Tri par importance absolue parmi les features admissibles
-      indices_candidats = sorted(
-          indices_candidats, key=lambda i: abs(shap_vals[i]), reverse=True
-      )
-      top_indices = indices_candidats[:3]
+                indices_candidats.append(idx)
 
-      for idx in top_indices:
-        nom_col = feature_names[idx]
-        val_shap = float(shap_vals[idx])
-        val_reelle = features_aligned.iloc[0, idx]
+            # Tri par contribution absolue SHAP parmi les features réellement actives
+            indices_candidats = sorted(
+                indices_candidats, key=lambda i: abs(shap_vals[i]), reverse=True
+            )
+            top_indices = indices_candidats[:3]
 
-        nom_clair = DICTIONNAIRE_LABELS.get(
-            nom_col, nom_col.replace("_", " ").capitalize()
-        )
-        favorable = val_shap < 0  # < 0 diminue le risque de défaut
+            for idx in top_indices:
+                nom_col = feature_names[idx]
+                val_shap = float(shap_vals[idx])
+                val_reelle = features_aligned.iloc[0, idx]
 
-        top_raisons.append({
-            "variable": nom_clair,
-            "valeur": (
-                None if pd.isna(val_reelle) else round(float(val_reelle), 2)
-            ),
-            "impact": "favorable" if favorable else "defavorable",
-            "description": (
-                f"{nom_clair} : impact positif renforçant la solvabilité"
-                if favorable
-                else (
-                    f"{nom_clair} : fragilité augmentant le risque de"
-                    " défaillance"
+                nom_clair = DICTIONNAIRE_LABELS.get(
+                    nom_col, nom_col.replace("_", " ").capitalize()
                 )
-            ),
-        })
+                favorable = val_shap < 0  # < 0 diminue le risque de défaut
+
+                # Formatage propre du libellé selon le type de variable
+                if any(nom_col.startswith(p) for p in ["tranche_effectif_", "code_naf_", "departement_"]):
+                    # Pour une modalité catégorielle active
+                    valeur_affichee = "Oui"
+                    description = (
+                        f"{nom_clair} : profil favorable renforçant la solvabilité"
+                        if favorable
+                        else f"{nom_clair} : segment d'activité ou taille à risque accru de défaillance"
+                    )
+                else:
+                    # Pour une variable continue (ex: âge de l'entreprise)
+                    valeur_affichee = round(float(val_reelle), 2)
+                    description = (
+                        f"{nom_clair} : impact positif renforçant la solvabilité"
+                        if favorable
+                        else f"{nom_clair} : fragilité augmentant le risque de défaillance"
+                    )
+
+                top_raisons.append({
+                    "variable": nom_clair,
+                    "valeur": valeur_affichee,
+                    "impact": "favorable" if favorable else "defavorable",
+                    "description": description,
+                })
   except Exception as e:
-    print(f"⚠️ Erreur lors du calcul SHAP : {e}")
+        print(f"⚠️ Erreur lors du calcul SHAP : {e}")
 
   return proba, top_raisons
 
