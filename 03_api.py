@@ -55,7 +55,7 @@ DICTIONNAIRE_LABELS = {
     "ratio_autonomie_financiere": "Autonomie financière",
     "tresorerie_jours_ca": "Couverture de trésorerie (jours)",
     "has_bilan_depose": "Transparence comptable (dépôt du bilan)",
-    "anciennete_bilan_annees": "Fraîcheur des données comptables",
+    "anciennete_bilan_ans": "Fraîcheur des données comptables",
     "tranche_effectif": "Tranche d'effectif",
     "departement": "Département",
     "code_naf": "Activité (Code NAF)",
@@ -73,7 +73,7 @@ COLONNES_COMPTABLES = {
     "ratio_endettement",
     "ratio_autonomie_financiere",
     "tresorerie_jours_ca",
-    "anciennete_bilan_annees",
+    "anciennete_bilan_ans",
 }
 
 if os.path.exists(MODEL_PATH):
@@ -168,11 +168,11 @@ def predire_risque_et_raisons(
 
   if has_bilan == 1 and pd.notna(date_exec):
     date_cloture = pd.to_datetime(date_exec, errors="coerce")
-    df_row["anciennete_bilan_annees"] = (
+    df_row["anciennete_bilan_ans"] = (
         pd.Timestamp.now() - date_cloture
     ).days / 365.25
   else:
-    df_row["anciennete_bilan_annees"] = np.nan
+    df_row["anciennete_bilan_ans"] = np.nan
 
   # 2. Confidentialité comptable (Loi Macron)
   if has_bilan == 1:
@@ -207,7 +207,7 @@ def predire_risque_et_raisons(
       "ratio_autonomie_financiere",
       "tresorerie_jours_ca",
       "age_entreprise_ans",
-      "anciennete_bilan_annees",
+      "anciennete_bilan_ans",
   ]
   for col in colonnes_num:
     if col in features.columns:
