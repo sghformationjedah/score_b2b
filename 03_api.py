@@ -238,79 +238,100 @@ def predire_risque_et_raisons(
   # 7. Extraction du Top 3 des facteurs explicatifs via SHAP
   top_raisons = []
   try:
-    if explainer is not None:
-      shap_vals = explainer(features_aligned).values[0]
-      if len(shap_vals.shape) == 2:
-        shap_vals = shap_vals[:, 1]
+     if explainer is not None:
+        shap_vals = explainer(features_aligned).values[0]
+        if len(shap_vals.shape) == 2:
+          shap_vals = shap_vals[:, 1]
 
-      indices_candidats = []
-      for idx, nom_col in enumerate(feature_names):
-        val_reelle = features_aligned.iloc[0, idx]
+        # Détection de l'absence réelle de bilan ou de confidentialité
+        ca_brut = float(entreprise_dict.get("chiffre_affaires") or 0.0)
+        date_exec_brute = entreprise_dict.get("date_exercice")
 
-        # Règle A : Exclusion des variables comptables si absence de bilan
-        if has_bilan == 0 and any(c in nom_col for c in COLONNES_BILAN):
-          continue
+        indices_candidats = []
+        for idx, nom_col in enumerate(feature_names):
+          val_reelle = features_aligned.iloc[0, idx]
 
-        # Règle B : Exclusion si la feature originale est manquante (NaN)
-        if pd.isna(val_reelle):
-          continue
+          # Règle 1 : Si pas de bilan déposé, exclusion formelle de TOUTES les variables comptables
+          if has_bilan == 0 and any(c in nom_col for c in COLONNES_BILAN):
+            continue
 
-        # Règle C : Verrou One-Hot Encoding (on ne garde la modalité que si active == 1)
-        est_binaire_ohe = any(
-            nom_col.startswith(prefix)
-            for prefix in ["tranche_effectif_", "code_naf_", "departement_"]
-        )
-        if est_binaire_ohe and val_reelle == 0:
-          continue
+          # Règle 2 : Si bilan confidentiel (CA <= 0), exclusion des variables dépendantes du CA
+          if (
+              has_bilan == 1
+              and ca_brut <= 0
+              and nom_col
+              in ["chiffre_affaires", "marge_nette", "tresorerie_jours_ca"]
+          ):
+            continue
 
-        indices_candidats.append(idx)
+          # Règle 3 : Fraîcheur comptable : ne jamais retenir si pas de date d'exercice réelle
+          if "anciennete_bilan" in nom_col and (
+              pd.isna(date_exec_brute) or date_exec_brute is None
+          ):
+            continue
 
-      # Tri par contribution absolue SHAP
-      indices_candidats = sorted(
-          indices_candidats, key=lambda i: abs(shap_vals[i]), reverse=True
-      )
-      top_indices = indices_candidats[:3]
+          # Règle 4 : Exclusion des NaN
+          if pd.isna(val_reelle):
+            continue
 
-      for idx in top_indices:
-        nom_col = feature_names[idx]
-        val_shap = float(shap_vals[idx])
-        val_reelle = features_aligned.iloc[0, idx]
-
-        nom_clair = DICTIONNAIRE_LABELS.get(
-            nom_col, nom_col.replace("_", " ").capitalize()
-        )
-        favorable = val_shap < 0  # < 0 diminue le risque de défaillance
-
-        if any(
-            nom_col.startswith(p)
-            for p in ["tranche_effectif_", "code_naf_", "departement_"]
-        ):
-          valeur_affichee = "Oui"
-          description = (
-              f"{nom_clair} : profil favorable renforçant la solvabilité"
-              if favorable
-              else (
-                  f"{nom_clair} : segment d'activité ou taille à risque accru de"
-                  " défaillance"
-              )
+          # Règle 5 : Verrou One-Hot Encoding (on ne retient que la modalité active == 1)
+          est_binaire_ohe = any(
+              nom_col.startswith(p)
+              for p in ["tranche_effectif_", "code_naf_", "departement_"]
           )
-        else:
-          valeur_affichee = round(float(val_reelle), 2)
-          description = (
-              f"{nom_clair} : impact positif renforçant la solvabilité"
-              if favorable
-              else f"{nom_clair} : fragilité augmentant le risque de défaillance"
-          )
+          if est_binaire_ohe and val_reelle == 0:
+            continue
 
-        top_raisons.append({
-            "variable": nom_clair,
-            "valeur": valeur_affichee,
-            "impact": "favorable" if favorable else "defavorable",
-            "description": description,
-        })
+          indices_candidats.append(idx)
+
+        # Tri par contribution absolue SHAP parmi les features réellement légitimes
+        indices_candidats = sorted(
+            indices_candidats, key=lambda i: abs(shap_vals[i]), reverse=True
+        )
+        top_indices = indices_candidats[:3]
+
+        for idx in top_indices:
+          nom_col = feature_names[idx]
+          val_shap = float(shap_vals[idx])
+          val_reelle = features_aligned.iloc[0, idx]
+
+          nom_clair = DICTIONNAIRE_LABELS.get(
+              nom_col, nom_col.replace("_", " ").capitalize()
+          )
+          favorable = val_shap < 0  # < 0 diminue le risque de défaut
+
+          if any(
+              nom_col.startswith(p)
+              for p in ["tranche_effectif_", "code_naf_", "departement_"]
+          ):
+            valeur_affichee = "Oui"
+            description = (
+                f"{nom_clair} : profil favorable renforçant la solvabilité"
+                if favorable
+                else (
+                    f"{nom_clair} : segment d'activité ou taille à risque accru"
+                    " de défaillance"
+                )
+            )
+          else:
+            valeur_affichee = round(float(val_reelle), 2)
+            description = (
+                f"{nom_clair} : impact positif renforçant la solvabilité"
+                if favorable
+                else (
+                    f"{nom_clair} : fragilité augmentant le risque de"
+                    " défaillance"
+                )
+            )
+
+          top_raisons.append({
+              "variable": nom_clair,
+              "valeur": valeur_affichee,
+              "impact": "favorable" if favorable else "defavorable",
+              "description": description,
+          })
   except Exception as e:
-    print(f"⚠️ Erreur lors du calcul SHAP : {e}")
-
+      print(f"⚠️ Erreur lors du calcul SHAP : {e}")
   return proba, top_raisons
 
 # -----------------------------------------------------------------------------
