@@ -62,7 +62,7 @@ DICTIONNAIRE_LABELS = {
 }
 
 # Liste des variables comptables strictes qui ne doivent JAMAIS sortir si has_bilan == 0
-COLONNES_COMPTABLES = {
+COLONNES_BILAN = [
     "chiffre_affaires",
     "resultat_net",
     "capitaux_propres",
@@ -74,7 +74,12 @@ COLONNES_COMPTABLES = {
     "ratio_autonomie_financiere",
     "tresorerie_jours_ca",
     "anciennete_bilan_ans",
-}
+]
+
+COLONNES_NUM_ADMIN = [
+    "age_entreprise_ans",
+    "has_bilan_depose",
+]
 
 if os.path.exists(MODEL_PATH):
   try:
@@ -162,26 +167,19 @@ def predire_risque_et_raisons(
 
   df_row = pd.DataFrame([entreprise_dict])
 
-  # 1. Ancienneté du bilan
-  date_exec = entreprise_dict.get("date_exercice")
+  # 1. Traitement de l'indicateur bilan et ancienneté
   has_bilan = int(entreprise_dict.get("has_bilan_depose") or 0)
+  date_exec = entreprise_dict.get("date_exercice")
 
   if has_bilan == 1 and pd.notna(date_exec):
     date_cloture = pd.to_datetime(date_exec, errors="coerce")
-    df_row["anciennete_bilan_ans"] = (
+    df_row["anciennete_bilan_annees"] = (
         pd.Timestamp.now() - date_cloture
     ).days / 365.25
   else:
-    df_row["anciennete_bilan_ans"] = np.nan
+    df_row["anciennete_bilan_annees"] = np.nan
 
-  # 2. Confidentialité comptable (Loi Macron)
-  if has_bilan == 1:
-    if df_row.get("chiffre_affaires", pd.Series([None])).iloc[0] == 0:
-      df_row["chiffre_affaires"] = np.nan
-    if df_row.get("resultat_net", pd.Series([None])).iloc[0] == 0:
-      df_row["resultat_net"] = np.nan
-
-  # 3. Exclusion des colonnes hors matrice
+  # 2. Exclusion des colonnes techniques et cibles hors matrice
   colonnes_a_exclure = [
       "siren",
       "nom_commercial",
@@ -189,48 +187,43 @@ def predire_risque_et_raisons(
       "nature_jugement",
       "date_jugement",
       "date_exercice",
+      "date_creation",
   ]
   features = df_row.drop(
       columns=[c for c in colonnes_a_exclure if c in df_row.columns]
   )
 
-  # Conversion numérique propre
-  colonnes_num = [
-      "chiffre_affaires",
-      "resultat_net",
-      "capitaux_propres",
-      "tresorerie",
-      "dettes_financieres",
-      "total_actif",
-      "marge_nette",
-      "ratio_endettement",
-      "ratio_autonomie_financiere",
-      "tresorerie_jours_ca",
-      "age_entreprise_ans",
-      "anciennete_bilan_ans",
-  ]
-  for col in colonnes_num:
+  # 3. Typage numérique strict (gestion des chaînes 'NULL', 'None', etc.)
+  toutes_colonnes_num = COLONNES_BILAN + COLONNES_NUM_ADMIN
+  for col in toutes_colonnes_num:
     if col in features.columns:
       features[col] = pd.to_numeric(
           features[col].replace(["", "NULL", "None", "nan", None], np.nan),
           errors="coerce",
       )
 
-  # Si bilan déclaré confidentiel, neutraliser les ratios dérivés
-  masque_confidentiel = (features.get("has_bilan_depose") == 1) & (
-      features.get("chiffre_affaires") <= 0
-  )
-  features.loc[
-      masque_confidentiel,
-      ["chiffre_affaires", "marge_nette", "tresorerie_jours_ca"],
-  ] = np.nan
+  # 4. Normalisation métier selon le statut du bilan
+  if has_bilan == 0:
+    # CAS SANS BILAN : on force TOUTES les features bilancielles à NaN
+    # (age_entreprise_ans, code_naf, effectif et departement restent intacts)
+    for col in COLONNES_BILAN:
+      if col in features.columns:
+        features[col] = np.nan
+  else:
+    # CAS AVEC BILAN : traitement de la confidentialité comptable (Loi Macron)
+    ca_val = features.get("chiffre_affaires", pd.Series([None])).iloc[0]
+    if pd.notna(ca_val) and ca_val <= 0:
+      colonnes_confidentialite = [
+          "chiffre_affaires",
+          "resultat_net",
+          "marge_nette",
+          "tresorerie_jours_ca",
+      ]
+      for col_c in colonnes_confidentialite:
+        if col_c in features.columns:
+          features[col_c] = np.nan
 
-  # CORRECTION 1 : Si l'entreprise n'a PAS de bilan, on n'impute JAMAIS ratio_endettement à 0.0
-  # On n'impute à 0.0 que si l'entreprise a un bilan mais sans dettes
-  if "ratio_endettement" in features.columns and has_bilan == 1:
-    features["ratio_endettement"] = features["ratio_endettement"].fillna(0.0)
-
-  # 4. Encodage et alignement avec l'artefact
+  # 5. Encodage One-Hot et alignement avec le schéma d'entraînement
   features_encoded = pd.get_dummies(features, drop_first=True)
   features_encoded.columns = features_encoded.columns.str.replace(
       r"[\[\]<]", "_", regex=True
@@ -239,84 +232,86 @@ def predire_risque_et_raisons(
       columns=feature_names, fill_value=0
   )
 
-  # 5. Calcul de probabilité
+  # 6. Inférence XGBoost
   proba = float(model.predict_proba(features_aligned)[0, 1])
 
-  # 6. Extraction des 3 raisons dominantes via SHAP filtrées selon le statut bilan
-  # 6. Extraction des 3 raisons dominantes via SHAP
+  # 7. Extraction du Top 3 des facteurs explicatifs via SHAP
   top_raisons = []
   try:
-        if explainer is not None:
-            shap_vals = explainer(features_aligned).values[0]
-            if len(shap_vals.shape) == 2:
-                shap_vals = shap_vals[:, 1]
+    if explainer is not None:
+      shap_vals = explainer(features_aligned).values[0]
+      if len(shap_vals.shape) == 2:
+        shap_vals = shap_vals[:, 1]
 
-            indices_candidats = []
-            for idx, nom_col in enumerate(feature_names):
-                val_reelle = features_aligned.iloc[0, idx]
+      indices_candidats = []
+      for idx, nom_col in enumerate(feature_names):
+        val_reelle = features_aligned.iloc[0, idx]
 
-                # 1. Exclusion des variables comptables si pas de bilan déposé
-                if has_bilan == 0 and any(c in nom_col for c in COLONNES_COMPTABLES):
-                    continue
+        # Règle A : Exclusion des variables comptables si absence de bilan
+        if has_bilan == 0 and any(c in nom_col for c in COLONNES_BILAN):
+          continue
 
-                # 2. Exclusion des valeurs manquantes originales
-                if pd.isna(val_reelle):
-                    continue
+        # Règle B : Exclusion si la feature originale est manquante (NaN)
+        if pd.isna(val_reelle):
+          continue
 
-                # 3. VERROU OHE : si c'est une colonne indicatrice binaire (tranche_*, code_naf_*, departement_*),
-                # on ne la retient QUE si l'entreprise possède cette modalité (val_reelle == 1).
-                # On évite ainsi d'expliquer une décision par des zéros sur des catégories inactives.
-                est_binaire_ohe = any(nom_col.startswith(prefix) for prefix in ["tranche_effectif_", "code_naf_", "departement_"])
-                if est_binaire_ohe and val_reelle == 0:
-                    continue
+        # Règle C : Verrou One-Hot Encoding (on ne garde la modalité que si active == 1)
+        est_binaire_ohe = any(
+            nom_col.startswith(prefix)
+            for prefix in ["tranche_effectif_", "code_naf_", "departement_"]
+        )
+        if est_binaire_ohe and val_reelle == 0:
+          continue
 
-                indices_candidats.append(idx)
+        indices_candidats.append(idx)
 
-            # Tri par contribution absolue SHAP parmi les features réellement actives
-            indices_candidats = sorted(
-                indices_candidats, key=lambda i: abs(shap_vals[i]), reverse=True
-            )
-            top_indices = indices_candidats[:3]
+      # Tri par contribution absolue SHAP
+      indices_candidats = sorted(
+          indices_candidats, key=lambda i: abs(shap_vals[i]), reverse=True
+      )
+      top_indices = indices_candidats[:3]
 
-            for idx in top_indices:
-                nom_col = feature_names[idx]
-                val_shap = float(shap_vals[idx])
-                val_reelle = features_aligned.iloc[0, idx]
+      for idx in top_indices:
+        nom_col = feature_names[idx]
+        val_shap = float(shap_vals[idx])
+        val_reelle = features_aligned.iloc[0, idx]
 
-                nom_clair = DICTIONNAIRE_LABELS.get(
-                    nom_col, nom_col.replace("_", " ").capitalize()
-                )
-                favorable = val_shap < 0  # < 0 diminue le risque de défaut
+        nom_clair = DICTIONNAIRE_LABELS.get(
+            nom_col, nom_col.replace("_", " ").capitalize()
+        )
+        favorable = val_shap < 0  # < 0 diminue le risque de défaillance
 
-                # Formatage propre du libellé selon le type de variable
-                if any(nom_col.startswith(p) for p in ["tranche_effectif_", "code_naf_", "departement_"]):
-                    # Pour une modalité catégorielle active
-                    valeur_affichee = "Oui"
-                    description = (
-                        f"{nom_clair} : profil favorable renforçant la solvabilité"
-                        if favorable
-                        else f"{nom_clair} : segment d'activité ou taille à risque accru de défaillance"
-                    )
-                else:
-                    # Pour une variable continue (ex: âge de l'entreprise)
-                    valeur_affichee = round(float(val_reelle), 2)
-                    description = (
-                        f"{nom_clair} : impact positif renforçant la solvabilité"
-                        if favorable
-                        else f"{nom_clair} : fragilité augmentant le risque de défaillance"
-                    )
+        if any(
+            nom_col.startswith(p)
+            for p in ["tranche_effectif_", "code_naf_", "departement_"]
+        ):
+          valeur_affichee = "Oui"
+          description = (
+              f"{nom_clair} : profil favorable renforçant la solvabilité"
+              if favorable
+              else (
+                  f"{nom_clair} : segment d'activité ou taille à risque accru de"
+                  " défaillance"
+              )
+          )
+        else:
+          valeur_affichee = round(float(val_reelle), 2)
+          description = (
+              f"{nom_clair} : impact positif renforçant la solvabilité"
+              if favorable
+              else f"{nom_clair} : fragilité augmentant le risque de défaillance"
+          )
 
-                top_raisons.append({
-                    "variable": nom_clair,
-                    "valeur": valeur_affichee,
-                    "impact": "favorable" if favorable else "defavorable",
-                    "description": description,
-                })
+        top_raisons.append({
+            "variable": nom_clair,
+            "valeur": valeur_affichee,
+            "impact": "favorable" if favorable else "defavorable",
+            "description": description,
+        })
   except Exception as e:
-        print(f"⚠️ Erreur lors du calcul SHAP : {e}")
+    print(f"⚠️ Erreur lors du calcul SHAP : {e}")
 
   return proba, top_raisons
-
 
 # -----------------------------------------------------------------------------
 # MOTEUR DE RÈGLES D'OCTROI DE CRÉDIT
@@ -484,8 +479,7 @@ def get_entreprise_by_siren(
   if len(siren_propre) != 9 or not siren_propre.isdigit():
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Le numéro SIREN doit comporter exactement 9 chiffres.",
-    )
+        detail="Le numéro SIREN doit comporter exactement 9 chiffres.",)
 
   conn = None
   try:
@@ -525,7 +519,7 @@ def get_entreprise_by_siren(
           nom_commercial=donnees_entreprise.get("nom_commercial"),
           montant_demande=montant_demande,
           proba_defaut=arbitrage.get("proba_defaut"),
-          statut_decision=arbitrage.get("statut"),
+          statut_decision= arbitrage.get("statut"),
           plafond_accorde=arbitrage.get("montant_accorde", 0.0),
           motif_decision=arbitrage.get("motif", ""),
       )
