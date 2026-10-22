@@ -204,8 +204,7 @@ def predire_risque_et_raisons(
 
   # 4. Normalisation métier selon le statut du bilan
   if has_bilan == 0:
-    # CAS SANS BILAN : on force TOUTES les features bilancielles à NaN
-    # (age_entreprise_ans, code_naf, effectif et departement restent intacts)
+    # CAS SANS BILAN : on force toutes les features bilancielles à NaN
     for col in COLONNES_BILAN:
       if col in features.columns:
         features[col] = np.nan
@@ -235,105 +234,79 @@ def predire_risque_et_raisons(
   # 6. Inférence XGBoost
   proba = float(model.predict_proba(features_aligned)[0, 1])
 
-  # 7. Extraction du Top 3 des facteurs explicatifs via SHAP
+  # 7. Extraction des 3 variables championnes SHAP du modèle
   top_raisons = []
   try:
-     if explainer is not None:
-        shap_vals = explainer(features_aligned).values[0]
-        if len(shap_vals.shape) == 2:
-          shap_vals = shap_vals[:, 1]
+    if explainer is not None:
+      shap_vals = explainer(features_aligned).values[0]
+      if len(shap_vals.shape) == 2:
+        shap_vals = shap_vals[:, 1]
 
-        # Détection de l'absence réelle de bilan ou de confidentialité
-        ca_brut = float(entreprise_dict.get("chiffre_affaires") or 0.0)
-        date_exec_brute = entreprise_dict.get("date_exercice")
+      indices_candidats = []
+      for idx, nom_col in enumerate(feature_names):
+        val_reelle = features_aligned.iloc[0, idx]
 
-        indices_candidats = []
-        for idx, nom_col in enumerate(feature_names):
-          val_reelle = features_aligned.iloc[0, idx]
+        # Ignore les données absentes
+        if pd.isna(val_reelle):
+          continue
 
-          # Règle 1 : Si pas de bilan déposé, exclusion formelle de TOUTES les variables comptables
-          if has_bilan == 0 and any(c in nom_col for c in COLONNES_BILAN):
-            continue
-
-          # Règle 2 : Si bilan confidentiel (CA <= 0), exclusion des variables dépendantes du CA
-          if (
-              has_bilan == 1
-              and ca_brut <= 0
-              and nom_col
-              in ["chiffre_affaires", "marge_nette", "tresorerie_jours_ca"]
-          ):
-            continue
-
-          # Règle 3 : Fraîcheur comptable : ne jamais retenir si pas de date d'exercice réelle
-          if "anciennete_bilan" in nom_col and (
-              pd.isna(date_exec_brute) or date_exec_brute is None
-          ):
-            continue
-
-          # Règle 4 : Exclusion des NaN
-          if pd.isna(val_reelle):
-            continue
-
-          # Règle 5 : Verrou One-Hot Encoding (on ne retient que la modalité active == 1)
-          est_binaire_ohe = any(
-              nom_col.startswith(p)
-              for p in ["tranche_effectif_", "code_naf_", "departement_"]
-          )
-          if est_binaire_ohe and val_reelle == 0:
-            continue
-
-          indices_candidats.append(idx)
-
-        # Tri par contribution absolue SHAP parmi les features réellement légitimes
-        indices_candidats = sorted(
-            indices_candidats, key=lambda i: abs(shap_vals[i]), reverse=True
+        # Ignore les modalités catégorielles non actives (valeur == 0)
+        est_binaire_ohe = any(
+            nom_col.startswith(p)
+            for p in ["tranche_effectif_", "code_naf_", "departement_"]
         )
-        top_indices = indices_candidats[:3]
+        if est_binaire_ohe and val_reelle == 0:
+          continue
 
-        for idx in top_indices:
-          nom_col = feature_names[idx]
-          val_shap = float(shap_vals[idx])
-          val_reelle = features_aligned.iloc[0, idx]
+        indices_candidats.append(idx)
 
-          nom_clair = DICTIONNAIRE_LABELS.get(
-              nom_col, nom_col.replace("_", " ").capitalize()
+      # Classement par importance absolue SHAP selon le modèle
+      indices_candidats = sorted(
+          indices_candidats, key=lambda i: abs(shap_vals[i]), reverse=True
+      )
+      top_indices = indices_candidats[:3]
+
+      for idx in top_indices:
+        nom_col = feature_names[idx]
+        val_shap = float(shap_vals[idx])
+        val_reelle = features_aligned.iloc[0, idx]
+
+        nom_clair = DICTIONNAIRE_LABELS.get(
+            nom_col, nom_col.replace("_", " ").capitalize()
+        )
+        favorable = val_shap < 0  # < 0 diminue le risque de défaut
+
+        if any(
+            nom_col.startswith(p)
+            for p in ["tranche_effectif_", "code_naf_", "departement_"]
+        ):
+          valeur_affichee = "Oui"
+          description = (
+              f"{nom_clair} : profil favorable renforçant la solvabilité"
+              if favorable
+              else (
+                  f"{nom_clair} : segment d'activité ou taille à risque accru"
+                  " de défaillance"
+              )
           )
-          favorable = val_shap < 0  # < 0 diminue le risque de défaut
+        else:
+          valeur_affichee = round(float(val_reelle), 2)
+          description = (
+              f"{nom_clair} : impact positif renforçant la solvabilité"
+              if favorable
+              else f"{nom_clair} : fragilité augmentant le risque de défaillance"
+          )
 
-          if any(
-              nom_col.startswith(p)
-              for p in ["tranche_effectif_", "code_naf_", "departement_"]
-          ):
-            valeur_affichee = "Oui"
-            description = (
-                f"{nom_clair} : profil favorable renforçant la solvabilité"
-                if favorable
-                else (
-                    f"{nom_clair} : segment d'activité ou taille à risque accru"
-                    " de défaillance"
-                )
-            )
-          else:
-            valeur_affichee = round(float(val_reelle), 2)
-            description = (
-                f"{nom_clair} : impact positif renforçant la solvabilité"
-                if favorable
-                else (
-                    f"{nom_clair} : fragilité augmentant le risque de"
-                    " défaillance"
-                )
-            )
-
-          top_raisons.append({
-              "variable": nom_clair,
-              "valeur": valeur_affichee,
-              "impact": "favorable" if favorable else "defavorable",
-              "description": description,
-          })
+        top_raisons.append({
+            "variable": nom_clair,
+            "valeur": valeur_affichee,
+            "impact": "favorable" if favorable else "defavorable",
+            "description": description,
+        })
   except Exception as e:
-      print(f"⚠️ Erreur lors du calcul SHAP : {e}")
-  return proba, top_raisons
+    print(f"⚠️ Erreur lors du calcul SHAP : {e}")
 
+  return proba, top_raisons
 # -----------------------------------------------------------------------------
 # MOTEUR DE RÈGLES D'OCTROI DE CRÉDIT
 # -----------------------------------------------------------------------------
