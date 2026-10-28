@@ -14,9 +14,7 @@ RUN pip install --no-cache-dir \
     joblib \
     scikit-learn \
     xgboost\
-    shap\
-    pathlib\
-    os
+    shap
 
 
 COPY . .
