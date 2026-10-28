@@ -236,29 +236,29 @@ with tab_analyse:
               couleur = couleurs_badge.get(statut, "#64748b")
 
               st.markdown(
-                  f"""
-                  <div style="background-color: #f8fafc; border: 2px solid {couleur}; border-radius: 10px; padding: 15px; text-align: center;">
-                      <span style="background-color: {couleur}; color: white; padding: 4px 10px; border-radius: 6px; font-weight: bold; font-size: 0.85rem;">
-                          DÉCISION : {statut}
-                      </span>
-                      <h2 style="margin: 10px 0 5px 0; color: {couleur}; font-size: 2rem;">
-                          {proba_pct:.1f} %
-                      </h2>
-                      <p style="margin: 0; color: #475569; font-size: 0.85rem; font-weight: 600;">
-                          Probabilité de défaillance (XGBoost)
-                      </p>
-                      <hr style="margin: 10px 0;">
-                      <p style="margin: 0; font-size: 0.95rem;">
-                          <b>Montant Demandé :</b> <span style="color: #0f172a; font-weight: bold;">{montant_demande:,.0f} €</span>
-                          <br>
-                          <b>Montant Accordé :</b> <span style="color: #0f172a; font-weight: bold;">{accord:,.0f} €</span>
-                          <span style="color: #64748b;">(Plafond : {plafond:,.0f} €)</span>
-                      </p>
-                  </div>
-                  <br>
-                  """,
-                  unsafe_allow_html=True,
-              )
+                f"""
+                <div style="background-color: var(--secondary-background-color); border: 2px solid {couleur}; border-radius: 10px; padding: 15px; text-align: center;">
+                    <span style="background-color: {couleur}; color: white; padding: 4px 10px; border-radius: 6px; font-weight: bold; font-size: 0.85rem;">
+                        DÉCISION : {statut}
+                    </span>
+                    <h2 style="margin: 10px 0 5px 0; color: {couleur}; font-size: 2rem;">
+                        {proba_pct:.1f} %
+                    </h2>
+                    <p style="margin: 0; color: var(--text-color); opacity: 0.75; font-size: 0.85rem; font-weight: 600;">
+                        Probabilité de défaillance (XGBoost)
+                    </p>
+                    <hr style="margin: 10px 0; opacity: 0.25;">
+                    <p style="margin: 0; font-size: 0.95rem; color: var(--text-color);">
+                        <b>Montant Demandé :</b> <span style="font-weight: bold;">{montant_demande:,.0f} €</span>
+                        <br>
+                        <b>Montant Accordé :</b> <span style="font-weight: bold;">{accord:,.0f} €</span>
+                        <span style="opacity: 0.65;">(Plafond : {plafond:,.0f} €)</span>
+                    </p>
+                </div>
+                <br>
+                """,
+                unsafe_allow_html=True, 
+            )
 
             # Bandeau recommandation & Top raisons
             st.info(f"💡 **Recommandation du moteur d'octroi :** {motif}")
