@@ -44,6 +44,7 @@ def wake_up_backend(api_url: str, timeout_seconds: int = 70) -> bool:
 
   health_endpoint = f"{api_url.rstrip('/')}/health"
   start_time = time.time()
+  #motif=""
 
   with st.spinner("⏳ Vérification de l'état du serveur..."):
     while time.time() - start_time < timeout_seconds:

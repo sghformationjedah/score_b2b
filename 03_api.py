@@ -8,6 +8,8 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import shap
+from pathlib import Path
+import os
 
 app = FastAPI(
     title="API Solvabilité BTP",
@@ -31,12 +33,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+ 
 # -----------------------------------------------------------------------------
 # CHARGEMENT DE L'ARTEFACT XGBOOST ET DE L'EXPLAINER SHAP
 # -----------------------------------------------------------------------------
-ARTEFACT_FILE_NAME = "modele_1_xgboost_NN_0.joblib"
-MODEL_PATH = os.getenv("MODEL_PATH", ARTEFACT_FILE_NAME)
+#ARTEFACT_FILE_NAME = "modele_1_xgboost_300_trees.joblib"
+#MODEL_PATH = "D:/Projets/Formation/02 - DATA_ANALYSIS_FULLSTACK/Projet/score_b2b/modele_1_xgboost_300_trees.joblib" #os.getenv("MODEL_PATH", ARTEFACT_FILE_NAME)
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_PATH = BASE_DIR / "modele_1_xgboost_300_trees.joblib"
+
 print("MODEL_PATH", MODEL_PATH)
 model = None
 explainer = None
@@ -169,16 +174,21 @@ def predire_risque_et_raisons(
 
   # 1. Traitement de l'indicateur bilan et ancienneté
   has_bilan = int(entreprise_dict.get("has_bilan_depose") or 0)
+  df_row["tranche_effectif"] = df_row["tranche_effectif"].replace("NN", "0")
+  #Debug
+  #print ("tranche effectif ",df_row["tranche_effectif"]) 
+  
   date_exec = entreprise_dict.get("date_exercice")
 
   if has_bilan == 1 and pd.notna(date_exec):
     date_cloture = pd.to_datetime(date_exec, errors="coerce")
-    df_row["anciennete_bilan_annees"] = (
+    df_row["anciennete_bilan_ans"] = (
         pd.Timestamp.now() - date_cloture
     ).days / 365.25
   else:
-    df_row["anciennete_bilan_annees"] = np.nan
-
+    df_row["anciennete_bilan_ans"] = np.nan
+    #Debug
+    #print ("anciennete_bilan_ans ",df_row["anciennete_bilan_ans"])
   # 2. Exclusion des colonnes techniques et cibles hors matrice
   colonnes_a_exclure = [
       "siren",
@@ -203,33 +213,71 @@ def predire_risque_et_raisons(
       )
 
   # 4. Normalisation métier selon le statut du bilan
+  # 4. Normalisation métier selon le statut du bilan
+  print("has_bilan", has_bilan)
   if has_bilan == 0:
-    # CAS SANS BILAN : on force toutes les features bilancielles à NaN
+  # CAS 1 : Aucun bilan déposé -> tout le volet bilanciel passe à NaN
     for col in COLONNES_BILAN:
-      if col in features.columns:
-        features[col] = np.nan
+        if col in features.columns:
+            features[col] = np.nan
   else:
-    # CAS AVEC BILAN : traitement de la confidentialité comptable (Loi Macron)
-    ca_val = features.get("chiffre_affaires", pd.Series([None])).iloc[0]
-    if pd.notna(ca_val) and ca_val <= 0:
-      colonnes_confidentialite = [
-          "chiffre_affaires",
-          "resultat_net",
-          "marge_nette",
-          "tresorerie_jours_ca",
-      ]
-      for col_c in colonnes_confidentialite:
-        if col_c in features.columns:
-          features[col_c] = np.nan
+    # CAS 2 : Bilan déposé mais CA nul/masqué (confidentialité Loi Macron)
+        print("Traitement Bilan = 1")
+        ca_val = features.get("chiffre_affaires", pd.Series([None])).iloc[0]
+        if pd.notna(ca_val) and ca_val <= 0:
+    # On bascule le CA et les ratios dépendants du CA à NaN
+            for col_ca in [
+            "chiffre_affaires",
+            "resultat_net",
+            "marge_nette",
+            "tresorerie_jours_ca",
+            ]:
+                if col_ca in features.columns:
+                    features[col_ca] = np.nan
 
+    # Pour toutes les autres colonnes bilancielles :
+    # Si la valeur vaut 0.0 (faux zéro / champ non renseigné), on force à NaN
+            for col in COLONNES_BILAN:
+                if (
+                    col in features.columns
+                    and pd.notna(features[col].iloc[0])
+                    and features[col].iloc[0] == 0.0
+                ):
+                    features[col] = np.nan
+                    print ("features[col]",features[col])
   # 5. Encodage One-Hot et alignement avec le schéma d'entraînement
-  features_encoded = pd.get_dummies(features, drop_first=True)
+  # 5. Encodage One-Hot et alignement avec le schéma d'entraînement
+  cat = [
+        "code_naf",
+        "tranche_effectif",
+        "departement",
+    ]
+  cat_presentes = [c for c in cat if c in features.columns]
+
+    # Sécurisation des types : conversion explicite en string pour un nommage strict
+  features_cat = features.copy()
+  for col_c in cat_presentes:
+        features_cat[col_c] = features_cat[col_c].astype(str).str.strip()
+
+    # OBLIGATOIRE à l'inférence : drop_first=False (sinon l'unique modalité est effacée)
+  features_encoded = pd.get_dummies(
+        features_cat, columns=cat_presentes, drop_first=False, dtype=int
+    )
+
+    # Nettoyage des caractères spéciaux pour compatibilité XGBoost
   features_encoded.columns = features_encoded.columns.str.replace(
-      r"[\[\]<]", "_", regex=True
-  )
+        r"[\[\]<]", "_", regex=True
+    )
+  print("features_encoded: ",features_encoded.to_dict())
+    # Alignement strict avec l'artefact d'entraînement
   features_aligned = features_encoded.reindex(
-      columns=feature_names, fill_value=0
-  )
+        columns=feature_names, fill_value=0
+    )
+
+    # DEBUG : Vérification immédiate des colonnes OHE actives (valeur == 1)
+  cols_actives = [c for c in feature_names if features_aligned.iloc[0][c] == 1]
+  print(f"DEBUG API - Colonnes catégorielles actives ({len(cols_actives)}) : {cols_actives}")
+
 
   # 6. Inférence XGBoost
   proba = float(model.predict_proba(features_aligned)[0, 1])
@@ -238,71 +286,80 @@ def predire_risque_et_raisons(
   top_raisons = []
   try:
     if explainer is not None:
-      shap_vals = explainer(features_aligned).values[0]
-      if len(shap_vals.shape) == 2:
-        shap_vals = shap_vals[:, 1]
+        shap_vals = explainer(features_aligned).values[0]
+        if len(shap_vals.shape) == 2:
+            shap_vals = shap_vals[:, 1]
 
-      indices_candidats = []
-      for idx, nom_col in enumerate(feature_names):
-        val_reelle = features_aligned.iloc[0, idx]
+        indices_candidats = []
+        for idx, nom_col in enumerate(feature_names):
+            val_reelle = features_aligned.iloc[0, idx]
 
-        # Ignore les données absentes
-        if pd.isna(val_reelle):
-          continue
+            # Ignore les données absentes
+            if pd.isna(val_reelle):
+                continue
 
-        # Ignore les modalités catégorielles non actives (valeur == 0)
-        est_binaire_ohe = any(
-            nom_col.startswith(p)
-            for p in ["tranche_effectif_", "code_naf_", "departement_"]
+            # Ignore les modalités catégorielles non actives (valeur == 0)
+            est_binaire_ohe = any(
+                nom_col.startswith(p)
+                for p in ["tranche_effectif_", "code_naf_", "departement_"]
+            )
+            if est_binaire_ohe and val_reelle == 0:
+                continue        
+            indices_candidats.append(idx)
+
+        # Classement par importance absolue SHAP décroissante
+        indices_candidats = sorted(
+            indices_candidats, key=lambda i: abs(shap_vals[i]), reverse=True
         )
-        if est_binaire_ohe and val_reelle == 0:
-          continue
+        
+        # Sélection stricte du Top 3
+        top_indices = indices_candidats[:3]
 
-        indices_candidats.append(idx)
+        # Somme des impacts absolus du Top 3 pour le calcul du poids relatif
+        total_abs_top = sum(abs(float(shap_vals[i])) for i in top_indices)
 
-      # Classement par importance absolue SHAP selon le modèle
-      indices_candidats = sorted(
-          indices_candidats, key=lambda i: abs(shap_vals[i]), reverse=True
-      )
-      top_indices = indices_candidats[:3]
+        for idx in top_indices:
+            nom_col = feature_names[idx]
+            val_shap = float(shap_vals[idx])
+            val_reelle = features_aligned.iloc[0, idx]
 
-      for idx in top_indices:
-        nom_col = feature_names[idx]
-        val_shap = float(shap_vals[idx])
-        val_reelle = features_aligned.iloc[0, idx]
+            # Formatage demandé : signe obligatoire (+ ou -) et 4 décimales
+            shap_formatte = f"SHAP: {val_shap:+.4f}"
 
-        nom_clair = DICTIONNAIRE_LABELS.get(
-            nom_col, nom_col.replace("_", " ").capitalize()
-        )
-        favorable = val_shap < 0  # < 0 diminue le risque de défaut
+            # Calcul du poids relatif en % sur le Top 3
+            poids_pct = (
+                round((abs(val_shap) / total_abs_top) * 100, 1)
+                if total_abs_top > 0
+                else 0.0
+            )
 
-        if any(
-            nom_col.startswith(p)
-            for p in ["tranche_effectif_", "code_naf_", "departement_"]
-        ):
-          valeur_affichee = "Oui"
-          description = (
-              f"{nom_clair} : profil favorable renforçant la solvabilité"
-              if favorable
-              else (
-                  f"{nom_clair} : segment d'activité ou taille à risque accru"
-                  " de défaillance"
-              )
-          )
-        else:
-          valeur_affichee = round(float(val_reelle), 2)
-          description = (
-              f"{nom_clair} : impact positif renforçant la solvabilité"
-              if favorable
-              else f"{nom_clair} : fragilité augmentant le risque de défaillance"
-          )
+            nom_clair = DICTIONNAIRE_LABELS.get(
+                nom_col, nom_col.replace("_", " ").capitalize()
+            )
+            favorable = val_shap < 0  # < 0 diminue le risque de défaut
 
-        top_raisons.append({
-            "variable": nom_clair,
-            "valeur": valeur_affichee,
-            "impact": "favorable" if favorable else "defavorable",
-            "description": description,
-        })
+            if any(
+                nom_col.startswith(p)
+                for p in ["tranche_effectif_", "code_naf_", "departement_"]
+            ):
+                valeur_affichee = "Oui"
+                sens = "profil favorable renforçant la solvabilité" if favorable else "segment ou taille à risque accru"
+            else:
+                valeur_affichee = round(float(val_reelle), 2)
+                sens = "impact positif renforçant la solvabilité" if favorable else "fragilité augmentant le risque de défaut"
+
+            description = f"{nom_clair} : {sens} ({shap_formatte} | {poids_pct} % du signal)"
+
+            top_raisons.append({
+                "variable": nom_clair,
+                "valeur": valeur_affichee,
+                "impact": "favorable" if favorable else "defavorable",
+                "shap_str": shap_formatte,      # Ex: "SHAP: +1.1063"
+                "val_shap": round(val_shap, 4), # Numérique pour les graphiques
+                "poids_pct": poids_pct,
+                "description": description,
+            })
+            
   except Exception as e:
     print(f"⚠️ Erreur lors du calcul SHAP : {e}")
 
