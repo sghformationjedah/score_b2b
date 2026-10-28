@@ -1,5 +1,7 @@
 import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 import joblib
@@ -8,8 +10,6 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import shap
-from pathlib import Path
-import os
 
 app = FastAPI(
     title="API Solvabilité BTP",
@@ -17,7 +17,7 @@ app = FastAPI(
         "Consultation, scoring XGBoost temps réel et arbitrage d'octroi de"
         " crédit B2B"
     ),
-    version="1.2.1",
+    version="1.3.1",
 )
 
 
@@ -33,12 +33,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
- 
+
 # -----------------------------------------------------------------------------
 # CHARGEMENT DE L'ARTEFACT XGBOOST ET DE L'EXPLAINER SHAP
 # -----------------------------------------------------------------------------
-#ARTEFACT_FILE_NAME = "modele_1_xgboost_300_trees.joblib"
-#MODEL_PATH = "D:/Projets/Formation/02 - DATA_ANALYSIS_FULLSTACK/Projet/score_b2b/modele_1_xgboost_300_trees.joblib" #os.getenv("MODEL_PATH", ARTEFACT_FILE_NAME)
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = BASE_DIR / "modele_1_xgboost_300_trees.joblib"
 
@@ -66,7 +64,6 @@ DICTIONNAIRE_LABELS = {
     "code_naf": "Activité (Code NAF)",
 }
 
-# Liste des variables comptables strictes qui ne doivent JAMAIS sortir si has_bilan == 0
 COLONNES_BILAN = [
     "chiffre_affaires",
     "resultat_net",
@@ -166,20 +163,15 @@ def enregistrer_historique_decision(
 def predire_risque_et_raisons(
     entreprise_dict: dict,
 ) -> Tuple[float, List[dict]]:
-  """Prépare les features, calcule proba_defaut et extrait le top 3 des raisons (SHAP)."""
   if model is None:
     return 0.0, []
 
   df_row = pd.DataFrame([entreprise_dict])
 
-  # 1. Traitement de l'indicateur bilan et ancienneté
   has_bilan = int(entreprise_dict.get("has_bilan_depose") or 0)
   df_row["tranche_effectif"] = df_row["tranche_effectif"].replace("NN", "0")
-  #Debug
-  #print ("tranche effectif ",df_row["tranche_effectif"]) 
-  
-  date_exec = entreprise_dict.get("date_exercice")
 
+  date_exec = entreprise_dict.get("date_exercice")
   if has_bilan == 1 and pd.notna(date_exec):
     date_cloture = pd.to_datetime(date_exec, errors="coerce")
     df_row["anciennete_bilan_ans"] = (
@@ -187,9 +179,7 @@ def predire_risque_et_raisons(
     ).days / 365.25
   else:
     df_row["anciennete_bilan_ans"] = np.nan
-    #Debug
-    #print ("anciennete_bilan_ans ",df_row["anciennete_bilan_ans"])
-  # 2. Exclusion des colonnes techniques et cibles hors matrice
+
   colonnes_a_exclure = [
       "siren",
       "nom_commercial",
@@ -203,7 +193,6 @@ def predire_risque_et_raisons(
       columns=[c for c in colonnes_a_exclure if c in df_row.columns]
   )
 
-  # 3. Typage numérique strict (gestion des chaînes 'NULL', 'None', etc.)
   toutes_colonnes_num = COLONNES_BILAN + COLONNES_NUM_ADMIN
   for col in toutes_colonnes_num:
     if col in features.columns:
@@ -212,158 +201,131 @@ def predire_risque_et_raisons(
           errors="coerce",
       )
 
-  # 4. Normalisation métier selon le statut du bilan
-  # 4. Normalisation métier selon le statut du bilan
-  print("has_bilan", has_bilan)
   if has_bilan == 0:
-  # CAS 1 : Aucun bilan déposé -> tout le volet bilanciel passe à NaN
     for col in COLONNES_BILAN:
-        if col in features.columns:
-            features[col] = np.nan
+      if col in features.columns:
+        features[col] = np.nan
   else:
-    # CAS 2 : Bilan déposé mais CA nul/masqué (confidentialité Loi Macron)
-        print("Traitement Bilan = 1")
-        ca_val = features.get("chiffre_affaires", pd.Series([None])).iloc[0]
-        if pd.notna(ca_val) and ca_val <= 0:
-    # On bascule le CA et les ratios dépendants du CA à NaN
-            for col_ca in [
-            "chiffre_affaires",
-            "resultat_net",
-            "marge_nette",
-            "tresorerie_jours_ca",
-            ]:
-                if col_ca in features.columns:
-                    features[col_ca] = np.nan
+    ca_val = features.get("chiffre_affaires", pd.Series([None])).iloc[0]
+    if pd.notna(ca_val) and ca_val <= 0:
+      for col_ca in [
+          "chiffre_affaires",
+          "resultat_net",
+          "marge_nette",
+          "tresorerie_jours_ca",
+      ]:
+        if col_ca in features.columns:
+          features[col_ca] = np.nan
 
-    # Pour toutes les autres colonnes bilancielles :
-    # Si la valeur vaut 0.0 (faux zéro / champ non renseigné), on force à NaN
-            for col in COLONNES_BILAN:
-                if (
-                    col in features.columns
-                    and pd.notna(features[col].iloc[0])
-                    and features[col].iloc[0] == 0.0
-                ):
-                    features[col] = np.nan
-                    print ("features[col]",features[col])
-  # 5. Encodage One-Hot et alignement avec le schéma d'entraînement
-  # 5. Encodage One-Hot et alignement avec le schéma d'entraînement
-  cat = [
-        "code_naf",
-        "tranche_effectif",
-        "departement",
-    ]
+      for col in COLONNES_BILAN:
+        if (
+            col in features.columns
+            and pd.notna(features[col].iloc[0])
+            and features[col].iloc[0] == 0.0
+        ):
+          features[col] = np.nan
+
+  cat = ["code_naf", "tranche_effectif", "departement"]
   cat_presentes = [c for c in cat if c in features.columns]
 
-    # Sécurisation des types : conversion explicite en string pour un nommage strict
   features_cat = features.copy()
   for col_c in cat_presentes:
-        features_cat[col_c] = features_cat[col_c].astype(str).str.strip()
+    features_cat[col_c] = features_cat[col_c].astype(str).str.strip()
 
-    # OBLIGATOIRE à l'inférence : drop_first=False (sinon l'unique modalité est effacée)
   features_encoded = pd.get_dummies(
-        features_cat, columns=cat_presentes, drop_first=False, dtype=int
-    )
-
-    # Nettoyage des caractères spéciaux pour compatibilité XGBoost
+      features_cat, columns=cat_presentes, drop_first=False, dtype=int
+  )
   features_encoded.columns = features_encoded.columns.str.replace(
-        r"[\[\]<]", "_", regex=True
-    )
-  print("features_encoded: ",features_encoded.to_dict())
-    # Alignement strict avec l'artefact d'entraînement
+      r"[\[\]<]", "_", regex=True
+  )
+
   features_aligned = features_encoded.reindex(
-        columns=feature_names, fill_value=0
-    )
+      columns=feature_names, fill_value=0
+  )
 
-    # DEBUG : Vérification immédiate des colonnes OHE actives (valeur == 1)
-  cols_actives = [c for c in feature_names if features_aligned.iloc[0][c] == 1]
-  print(f"DEBUG API - Colonnes catégorielles actives ({len(cols_actives)}) : {cols_actives}")
-
-
-  # 6. Inférence XGBoost
   proba = float(model.predict_proba(features_aligned)[0, 1])
 
-  # 7. Extraction des 3 variables championnes SHAP du modèle
   top_raisons = []
   try:
     if explainer is not None:
-        shap_vals = explainer(features_aligned).values[0]
-        if len(shap_vals.shape) == 2:
-            shap_vals = shap_vals[:, 1]
+      shap_vals = explainer(features_aligned).values[0]
+      if len(shap_vals.shape) == 2:
+        shap_vals = shap_vals[:, 1]
 
-        indices_candidats = []
-        for idx, nom_col in enumerate(feature_names):
-            val_reelle = features_aligned.iloc[0, idx]
+      indices_candidats = []
+      for idx, nom_col in enumerate(feature_names):
+        val_reelle = features_aligned.iloc[0, idx]
+        if pd.isna(val_reelle):
+          continue
 
-            # Ignore les données absentes
-            if pd.isna(val_reelle):
-                continue
-
-            # Ignore les modalités catégorielles non actives (valeur == 0)
-            est_binaire_ohe = any(
-                nom_col.startswith(p)
-                for p in ["tranche_effectif_", "code_naf_", "departement_"]
-            )
-            if est_binaire_ohe and val_reelle == 0:
-                continue        
-            indices_candidats.append(idx)
-
-        # Classement par importance absolue SHAP décroissante
-        indices_candidats = sorted(
-            indices_candidats, key=lambda i: abs(shap_vals[i]), reverse=True
+        est_binaire_ohe = any(
+            nom_col.startswith(p)
+            for p in ["tranche_effectif_", "code_naf_", "departement_"]
         )
-        
-        # Sélection stricte du Top 3
-        top_indices = indices_candidats[:3]
+        if est_binaire_ohe and val_reelle == 0:
+          continue
+        indices_candidats.append(idx)
 
-        # Somme des impacts absolus du Top 3 pour le calcul du poids relatif
-        total_abs_top = sum(abs(float(shap_vals[i])) for i in top_indices)
+      indices_candidats = sorted(
+          indices_candidats, key=lambda i: abs(shap_vals[i]), reverse=True
+      )
+      top_indices = indices_candidats[:3]
+      total_abs_top = sum(abs(float(shap_vals[i])) for i in top_indices)
 
-        for idx in top_indices:
-            nom_col = feature_names[idx]
-            val_shap = float(shap_vals[idx])
-            val_reelle = features_aligned.iloc[0, idx]
+      for idx in top_indices:
+        nom_col = feature_names[idx]
+        val_shap = float(shap_vals[idx])
+        val_reelle = features_aligned.iloc[0, idx]
 
-            # Formatage demandé : signe obligatoire (+ ou -) et 4 décimales
-            shap_formatte = f"SHAP: {val_shap:+.4f}"
+        shap_formatte = f"SHAP: {val_shap:+.4f}"
+        poids_pct = (
+            round((abs(val_shap) / total_abs_top) * 100, 1)
+            if total_abs_top > 0
+            else 0.0
+        )
 
-            # Calcul du poids relatif en % sur le Top 3
-            poids_pct = (
-                round((abs(val_shap) / total_abs_top) * 100, 1)
-                if total_abs_top > 0
-                else 0.0
-            )
+        nom_clair = DICTIONNAIRE_LABELS.get(
+            nom_col, nom_col.replace("_", " ").capitalize()
+        )
+        favorable = val_shap < 0
 
-            nom_clair = DICTIONNAIRE_LABELS.get(
-                nom_col, nom_col.replace("_", " ").capitalize()
-            )
-            favorable = val_shap < 0  # < 0 diminue le risque de défaut
+        if any(
+            nom_col.startswith(p)
+            for p in ["tranche_effectif_", "code_naf_", "departement_"]
+        ):
+          valeur_affichee = "Oui"
+          sens = (
+              "profil favorable renforçant la solvabilité"
+              if favorable
+              else "segment ou taille à risque accru"
+          )
+        else:
+          valeur_affichee = round(float(val_reelle), 2)
+          sens = (
+              "impact positif renforçant la solvabilité"
+              if favorable
+              else "fragilité augmentant le risque de défaut"
+          )
 
-            if any(
-                nom_col.startswith(p)
-                for p in ["tranche_effectif_", "code_naf_", "departement_"]
-            ):
-                valeur_affichee = "Oui"
-                sens = "profil favorable renforçant la solvabilité" if favorable else "segment ou taille à risque accru"
-            else:
-                valeur_affichee = round(float(val_reelle), 2)
-                sens = "impact positif renforçant la solvabilité" if favorable else "fragilité augmentant le risque de défaut"
+        description = (
+            f"{nom_clair} : {sens} ({shap_formatte} | {poids_pct} % du signal)"
+        )
 
-            description = f"{nom_clair} : {sens} ({shap_formatte} | {poids_pct} % du signal)"
-
-            top_raisons.append({
-                "variable": nom_clair,
-                "valeur": valeur_affichee,
-                "impact": "favorable" if favorable else "defavorable",
-                "shap_str": shap_formatte,      # Ex: "SHAP: +1.1063"
-                "val_shap": round(val_shap, 4), # Numérique pour les graphiques
-                "poids_pct": poids_pct,
-                "description": description,
-            })
-            
+        top_raisons.append({
+            "variable": nom_clair,
+            "valeur": valeur_affichee,
+            "impact": "favorable" if favorable else "defavorable",
+            "shap_str": shap_formatte,
+            "val_shap": round(val_shap, 4),
+            "poids_pct": poids_pct,
+            "description": description,
+        })
   except Exception as e:
     print(f"⚠️ Erreur lors du calcul SHAP : {e}")
 
   return proba, top_raisons
+
+
 # -----------------------------------------------------------------------------
 # MOTEUR DE RÈGLES D'OCTROI DE CRÉDIT
 # -----------------------------------------------------------------------------
@@ -376,7 +338,6 @@ def calculer_arbitrage_credit(
   nature_jug = donnees.get("nature_jugement")
   bodacc_actif = int(donnees.get("cible_defaillance") or 0) == 1
 
-  # 1. Règle NOIR
   if bodacc_actif:
     return {
         "statut": "NOIR",
@@ -407,8 +368,6 @@ def calculer_arbitrage_credit(
             },
         ],
     }
-
-  # 2. Règle BLOCAGE BILAN
   elif has_bilan == 1 and fp <= 0:
     return {
         "statut": "BLOCAGE_BILAN",
@@ -439,8 +398,6 @@ def calculer_arbitrage_credit(
             },
         ],
     }
-
-  # 3. Règle ROUGE
   elif proba > 0.30:
     return {
         "statut": "ROUGE",
@@ -453,8 +410,6 @@ def calculer_arbitrage_credit(
         ),
         "top_raisons": top_raisons,
     }
-
-  # 4. Règle ORANGE
   elif 0.15 < proba <= 0.30:
     if has_bilan == 1 and ca >= 10000:
       capacite_nominale = min(ca * 0.07, fp * 0.25)
@@ -481,8 +436,6 @@ def calculer_arbitrage_credit(
         ),
         "top_raisons": top_raisons,
     }
-
-  # 5. Règle VERT
   else:
     if has_bilan == 1 and ca >= 10000:
       capacite_nominale = min(ca * 0.07, fp * 0.25)
@@ -491,9 +444,7 @@ def calculer_arbitrage_credit(
     elif has_bilan == 1 and ca < 10000:
       capacite_nominale = min(5000.0, fp * 0.25)
       plafond_ajuste = capacite_nominale
-      motif_detail = (
-          "forfait de confiance car chiffre d'affaires insuffisant"
-      )
+      motif_detail = "forfait de confiance car chiffre d'affaires insuffisant"
     else:
       capacite_nominale = 5000.0
       plafond_ajuste = 0.8 * capacite_nominale
@@ -514,7 +465,42 @@ def calculer_arbitrage_credit(
 
 
 # -----------------------------------------------------------------------------
-# ROUTE PRINCIPALE
+# ROUTE AUTOCOMPLÉTION : LISTE DES SIREN
+# -----------------------------------------------------------------------------
+@app.get(
+    "/entreprises/liste-siren",
+    response_model=List[Dict[str, str]],
+    status_code=status.HTTP_200_OK,
+)
+def get_liste_siren(limit: int = 3000):
+  """Renvoie les SIREN et raisons sociales avec cast textuel strict garanti."""
+  conn = None
+  try:
+    conn = get_db_connection()
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+      cur.execute(
+          """
+                SELECT 
+                    siren::text AS siren, 
+                    COALESCE(nom_commercial, 'Raison non renseignée') AS nom 
+                FROM entreprises_btp_solvabilite 
+                ORDER BY siren ASC 
+                LIMIT %s;
+            """,
+          (limit,),
+      )
+      records = cur.fetchall()
+      # Normalisation stricte en chaînes de caractères pour Pydantic
+      return [{"siren": str(r["siren"]), "nom": str(r["nom"])} for r in records]
+  except Exception as e:
+    print(f"⚠️ Erreur liste-siren : {e}")
+    raise HTTPException(status_code=500, detail=str(e))
+  finally:
+    if conn:
+      conn.close()
+
+# -----------------------------------------------------------------------------
+# ROUTE PRINCIPALE : SCORING D'UNE ENTREPRISE
 # -----------------------------------------------------------------------------
 @app.get(
     "/entreprises/{siren}",
@@ -530,13 +516,17 @@ def get_entreprise_by_siren(
   if len(siren_propre) != 9 or not siren_propre.isdigit():
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Le numéro SIREN doit comporter exactement 9 chiffres.",)
+        detail="Le numéro SIREN doit comporter exactement 9 chiffres.",
+    )
 
   conn = None
   try:
     conn = get_db_connection()
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-      query = "SELECT * FROM entreprises_btp_solvabilite WHERE siren = %s;"
+      # Cast explicite pour gérer indifféremment un type VARCHAR ou BIGINT en base
+      query = (
+          "SELECT * FROM entreprises_btp_solvabilite WHERE siren::text = %s;"
+      )
       cur.execute(query, (siren_propre,))
       entreprise = cur.fetchone()
 
@@ -563,14 +553,14 @@ def get_entreprise_by_siren(
           donnees_entreprise, proba, montant_demande, raisons
       )
 
-      # Historisation
+      # Historisation asynchrone
       background_tasks.add_task(
           enregistrer_historique_decision,
           siren=siren_propre,
           nom_commercial=donnees_entreprise.get("nom_commercial"),
           montant_demande=montant_demande,
           proba_defaut=arbitrage.get("proba_defaut"),
-          statut_decision= arbitrage.get("statut"),
+          statut_decision=arbitrage.get("statut"),
           plafond_accorde=arbitrage.get("montant_accorde", 0.0),
           motif_decision=arbitrage.get("motif", ""),
       )
@@ -582,6 +572,70 @@ def get_entreprise_by_siren(
     raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail=f"Erreur de connexion à la base de données : {str(e)}",
+    )
+  finally:
+    if conn:
+      conn.close()
+
+
+
+# -----------------------------------------------------------------------------
+# ROUTE HISTORIQUE : CONSULTATION DES DÉCISIONS PASSÉES
+# -----------------------------------------------------------------------------
+@app.get(
+    "/decisions/historique",
+    response_model=List[Dict[str, Any]],
+    status_code=status.HTTP_200_OK,
+)
+def get_historique_decisions(
+    limit: int = Query(20, ge=1, le=100),
+    statut: Optional[str] = Query(None),
+    siren: Optional[str] = Query(None),
+):
+  conn = None
+  try:
+    conn = get_db_connection()
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+      conditions = []
+      params = []
+
+      if siren:
+        conditions.append("siren::text = %s")
+        params.append(siren.strip())
+
+      if statut:
+        conditions.append("statut_decision = %s")
+        params.append(statut.strip())
+
+      where_clause = ""
+      if conditions:
+        where_clause = "WHERE " + " AND ".join(conditions)
+
+      query = f"""
+                SELECT 
+                    id,
+                    siren::text AS siren,
+                    nom_commercial,
+                    montant_demande,
+                    proba_defaut,
+                    statut_decision,
+                    plafond_accorde AS montant_accorde,
+                    motif_decision
+                FROM historique_decisions
+                {where_clause}
+                ORDER BY id DESC
+                LIMIT %s;
+            """
+      params.append(limit)
+
+      cur.execute(query, tuple(params))
+      records = cur.fetchall()
+      return [dict(r) for r in records]
+
+  except psycopg2.Error as e:
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Erreur lors de la lecture de l'historique : {str(e)}",
     )
   finally:
     if conn:
