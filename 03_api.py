@@ -246,80 +246,93 @@ def predire_risque_et_raisons(
   proba = float(model.predict_proba(features_aligned)[0, 1])
 
   top_raisons = []
+  SEUIL_SHAP_MIN = 0.01  # Seuil métier en dessous duquel l'impact est considéré comme négligeable
+
   try:
     if explainer is not None:
-      shap_vals = explainer(features_aligned).values[0]
-      if len(shap_vals.shape) == 2:
-        shap_vals = shap_vals[:, 1]
+        shap_vals = explainer(features_aligned).values[0]
+        if len(shap_vals.shape) == 2:
+            shap_vals = shap_vals[:, 1]
 
-      indices_candidats = []
-      for idx, nom_col in enumerate(feature_names):
-        val_reelle = features_aligned.iloc[0, idx]
-        if pd.isna(val_reelle):
-          continue
+        indices_candidats = []
+        prefixes_ohe = ("tranche_effectif_", "code_naf_", "departement_")
 
-        est_binaire_ohe = any(
-            nom_col.startswith(p)
-            for p in ["tranche_effectif_", "code_naf_", "departement_"]
+        for idx, nom_col in enumerate(feature_names):
+            val_reelle = features_aligned.iloc[0, idx]
+            val_shap = float(shap_vals[idx])
+
+        # 1. Ignorer les NaN
+            if pd.isna(val_reelle):
+                continue
+
+        # 2. Ignorer les variables dont la contribution SHAP est négligeable ou nulle
+            if abs(val_shap) < SEUIL_SHAP_MIN:
+                continue
+
+        # 3. Ignorer les modalités One-Hot absentes (valeur == 0)
+            est_binaire_ohe = nom_col.startswith(prefixes_ohe)
+            if est_binaire_ohe and val_reelle == 0:
+                continue
+
+            indices_candidats.append(idx)
+
+        # Tri par amplitude d'impact décroissante (|SHAP|)
+            indices_candidats = sorted(
+            indices_candidats, key=lambda i: abs(shap_vals[i]), reverse=True
         )
-        if est_binaire_ohe and val_reelle == 0:
-          continue
-        indices_candidats.append(idx)
 
-      indices_candidats = sorted(
-          indices_candidats, key=lambda i: abs(shap_vals[i]), reverse=True
-      )
-      top_indices = indices_candidats[:3]
-      total_abs_top = sum(abs(float(shap_vals[i])) for i in top_indices)
-
-      for idx in top_indices:
-        nom_col = feature_names[idx]
-        val_shap = float(shap_vals[idx])
-        val_reelle = features_aligned.iloc[0, idx]
-
-        shap_formatte = f"SHAP: {val_shap:+.4f}"
-        poids_pct = (
+        # Sélection du Top 3 (peut contenir 0, 1, 2 ou 3 variables selon la significativité)
+        top_indices = indices_candidats[:3]
+        total_abs_top = sum(abs(float(shap_vals[i])) for i in top_indices)
+        print("top_indices",top_indices)
+        for idx in top_indices:
+            nom_col = feature_names[idx]
+            val_shap = float(shap_vals[idx])
+            val_reelle = features_aligned.iloc[0, idx]
+            print("nom_col",nom_col , "val_shap", val_shap,"val_reelle",val_reelle)
+            shap_formatte = f"SHAP: {val_shap:+.4f}"
+            poids_pct = (
             round((abs(val_shap) / total_abs_top) * 100, 1)
             if total_abs_top > 0
             else 0.0
-        )
+            )
 
-        nom_clair = DICTIONNAIRE_LABELS.get(
+            # Récupération du libellé métier clair
+            nom_clair = DICTIONNAIRE_LABELS.get(
             nom_col, nom_col.replace("_", " ").capitalize()
-        )
-        favorable = val_shap < 0
+            )
+            favorable = val_shap < 0
 
-        if any(
-            nom_col.startswith(p)
-            for p in ["tranche_effectif_", "code_naf_", "departement_"]
-        ):
-          valeur_affichee = "Oui"
-          sens = (
-              "profil favorable renforçant la solvabilité"
-              if favorable
-              else "segment ou taille à risque accru"
-          )
-        else:
-          valeur_affichee = round(float(val_reelle), 2)
-          sens = (
-              "impact positif renforçant la solvabilité"
-              if favorable
-              else "fragilité augmentant le risque de défaut"
-          )
+            est_binaire_ohe = nom_col.startswith(prefixes_ohe)
+            if est_binaire_ohe:
+                valeur_affichee = "Oui"
+                sens = (
+                    "profil favorable renforçant la solvabilité"
+                    if favorable
+                    else "segment ou taille à risque accru"
+                )
+            else:
+                valeur_affichee = round(float(val_reelle), 2)
+                sens = (
+                    "impact positif renforçant la solvabilité"
+                    if favorable
+                    else "fragilité augmentant le risque de défaut"
+                )
 
-        description = (
+            description = (
             f"{nom_clair} : {sens} ({shap_formatte} | {poids_pct} % du signal)"
-        )
+            )
 
-        top_raisons.append({
-            "variable": nom_clair,
-            "valeur": valeur_affichee,
-            "impact": "favorable" if favorable else "defavorable",
-            "shap_str": shap_formatte,
-            "val_shap": round(val_shap, 4),
-            "poids_pct": poids_pct,
-            "description": description,
-        })
+            top_raisons.append({
+                "variable": nom_clair,
+                "valeur": valeur_affichee,
+                "impact": "favorable" if favorable else "defavorable",
+                "shap_str": shap_formatte,
+                "val_shap": round(val_shap, 4),
+                "poids_pct": poids_pct,
+                "description": description,
+            })
+
   except Exception as e:
     print(f"⚠️ Erreur lors du calcul SHAP : {e}")
 
@@ -472,7 +485,7 @@ def calculer_arbitrage_credit(
     response_model=List[Dict[str, str]],
     status_code=status.HTTP_200_OK,
 )
-def get_liste_siren(limit: int = 3000):
+def get_liste_siren(limit: int = 9900):
   """Renvoie les SIREN et raisons sociales avec cast textuel strict garanti."""
   conn = None
   try:
