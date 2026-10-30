@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir \
     pandas \
     requests
 
+# Copie de l'ensemble du projet (code + artefact du modèle )
 COPY . .
 
 EXPOSE 8501

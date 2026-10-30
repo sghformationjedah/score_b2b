@@ -16,9 +16,13 @@ RUN pip install --no-cache-dir \
     xgboost\
     shap
 
-
+# Copie de l'ensemble du projet (code + artefact du modèle)
 COPY . .
 
-EXPOSE 8000
+# Port par défaut si la variable PORT n'est pas définie (ex: en local)
+ENV PORT=8000
+EXPOSE 8000  
 
-CMD ["uvicorn", "03_api:app", "--host", "0.0.0.0", "--port", "8000"]
+#CMD ["uvicorn", "03_api:app", "--host", "0.0.0.0", "--port", "8000"]
+# Lancement via un sous-shell pour évaluer dynamiquement la variable ${PORT} injectée par Render
+CMD ["sh", "-c", "uvicorn 03_api:app --host 0.0.0.0 --port ${PORT}"]
