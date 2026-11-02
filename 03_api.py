@@ -38,7 +38,9 @@ app.add_middleware(
 # CHARGEMENT DE L'ARTEFACT XGBOOST ET DE L'EXPLAINER SHAP
 # -----------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
-MODEL_PATH = BASE_DIR / "modele_1_xgboost_300_trees.joblib"
+
+MODEL_PATH = BASE_DIR / "modele_1_xgboost.joblib"
+#MODEL_PATH = BASE_DIR / "modele_1_xgboost_300_trees.joblib"
 
 print("MODEL_PATH", MODEL_PATH)
 model = None
